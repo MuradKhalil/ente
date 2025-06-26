@@ -60,6 +60,7 @@ class _PeoplePageState extends State<PeoplePage> {
 
   late final StreamSubscription<LocalPhotosUpdatedEvent> _filesUpdatedEvent;
   late final StreamSubscription<PeopleChangedEvent> _peopleChangedEvent;
+  late SearchFilterDataProvider? _searchFilterDataProvider;
 
   @override
   void initState() {
@@ -75,6 +76,7 @@ class _PeoplePageState extends State<PeoplePage> {
           });
         }
       }
+
       if (event.source == widget.person.remoteID) {
         if (event.type == PeopleEventType.removedFaceFromCluster) {
           final filesBefore = files?.length ?? 0;
@@ -83,10 +85,9 @@ class _PeoplePageState extends State<PeoplePage> {
             files?.removeWhere((file) => file.uploadedFileID == fileID);
           }
           final filesAfter = files?.length ?? 0;
+          // Is this setState also indented to update gallery? If yes need to
+          // test if it actually works.
           if (filesBefore != filesAfter) setState(() {});
-        }
-        if (event.type == PeopleEventType.addedClusterToPerson) {
-          if (mounted) setState(() {});
         }
       }
     });
@@ -105,6 +106,12 @@ class _PeoplePageState extends State<PeoplePage> {
         setState(() {});
       }
     });
+    _searchFilterDataProvider = widget.searchResult != null
+        ? SearchFilterDataProvider(
+            initialGalleryFilter:
+                widget.searchResult!.getHierarchicalSearchFilter(),
+          )
+        : null;
   }
 
   Future<List<EnteFile>> loadPersonFiles() async {
@@ -138,12 +145,7 @@ class _PeoplePageState extends State<PeoplePage> {
     _logger.info("Building for ${_person.data.name}");
     return GalleryFilesState(
       child: InheritedSearchFilterDataWrapper(
-        searchFilterDataProvider: widget.searchResult != null
-            ? SearchFilterDataProvider(
-                initialGalleryFilter:
-                    widget.searchResult!.getHierarchicalSearchFilter(),
-              )
-            : null,
+        searchFilterDataProvider: _searchFilterDataProvider,
         child: Scaffold(
           appBar: PreferredSize(
             preferredSize:
@@ -267,7 +269,7 @@ class _GalleryState extends State<_Gallery> {
       reloadEvent: Bus.instance.on<LocalPhotosUpdatedEvent>(),
       forceReloadEvents: [
         Bus.instance.on<PeopleChangedEvent>().where(
-              (event) => event.type != PeopleEventType.addedClusterToPerson,
+              (event) => event.type == PeopleEventType.addedClusterToPerson,
             ),
       ],
       removalEventTypes: const {
