@@ -40,14 +40,12 @@ export interface MergedSourceURL {
 
 export interface GalleryContextType {
     setActiveCollectionID: (collectionID: number) => void;
-    syncWithRemote: (force?: boolean, silent?: boolean) => Promise<void>;
     setBlockingLoad: (value: boolean) => void;
     photoListHeader: TimeStampListItem;
     user: User;
     userIDToEmailMap: Map<number, string>;
     emailList: string[];
     openHiddenSection: (callback?: () => void) => void;
-    isClipSearchResult: boolean;
     setSelectedFiles: (value) => void;
     selectedFile: SelectedState;
 }

@@ -11,7 +11,7 @@ import { formattedDateRelative } from "ente-base/i18n-date";
 import log from "ente-base/log";
 import { downloadManager } from "ente-gallery/services/download";
 import { EnteFile } from "ente-media/file";
-import { fileDurationString } from "ente-media/file-metadata";
+import { fileCreationTime, fileDurationString } from "ente-media/file-metadata";
 import { FileType } from "ente-media/file-type";
 import {
     GAP_BTW_TILES,
@@ -26,7 +26,6 @@ import {
 } from "ente-new/photos/components/PlaceholderThumbnails";
 import { TileBottomTextOverlay } from "ente-new/photos/components/Tiles";
 import { PseudoCollectionID } from "ente-new/photos/services/collection-summary";
-import { enteFileDeletionDate } from "ente-new/photos/services/files";
 import { t } from "i18next";
 import memoize from "memoize-one";
 import { GalleryContext } from "pages/gallery";
@@ -93,6 +92,19 @@ export interface FileListAnnotatedFile {
     timelineDateString: string;
 }
 
+/**
+ * A file augmented with the date when it will be permanently deleted.
+ *
+ * See: [Note: Files in trash pseudo collection have deleteBy]
+ */
+export type EnteTrashFile = EnteFile & {
+    /**
+     * Timestamp (epoch microseconds) when the trash item (and its corresponding
+     * {@link EnteFile}) will be permanently deleted.
+     */
+    deleteBy?: number;
+};
+
 export interface FileListProps {
     /** The height we should occupy (needed since the list is virtualized). */
     height: number;
@@ -111,6 +123,10 @@ export interface FileListProps {
      */
     modePlus?: GalleryBarMode | "search";
     showAppDownloadBanner?: boolean;
+    /**
+     * If `true`, then the current listing is showing magic search results.
+     */
+    isMagicSearchResult?: boolean;
     selectable?: boolean;
     setSelected: (
         selected: SelectedState | ((selected: SelectedState) => SelectedState),
@@ -155,6 +171,7 @@ export const FileList: React.FC<FileListProps> = ({
     modePlus,
     annotatedFiles,
     showAppDownloadBanner,
+    isMagicSearchResult,
     selectable,
     selected,
     setSelected,
@@ -223,7 +240,7 @@ export const FileList: React.FC<FileListProps> = ({
                     ),
                 );
             }
-            if (galleryContext.isClipSearchResult) {
+            if (isMagicSearchResult) {
                 noGrouping(timeStampList);
             } else {
                 groupByTime(timeStampList);
@@ -265,7 +282,7 @@ export const FileList: React.FC<FileListProps> = ({
         annotatedFiles,
         galleryContext.photoListHeader,
         publicCollectionGalleryContext.photoListHeader,
-        galleryContext.isClipSearchResult,
+        isMagicSearchResult,
     ]);
 
     useEffect(() => {
@@ -355,21 +372,19 @@ export const FileList: React.FC<FileListProps> = ({
 
     const groupByTime = (timeStampList: TimeStampListItem[]) => {
         let listItemIndex = 0;
-        let currentDate;
+        let lastCreationTime: number | undefined;
         annotatedFiles.forEach((item, index) => {
+            const creationTime = fileCreationTime(item.file) / 1000;
             if (
-                !currentDate ||
-                !isSameDay(
-                    new Date(item.file.metadata.creationTime / 1000),
-                    new Date(currentDate),
-                )
+                !lastCreationTime ||
+                !isSameDay(new Date(creationTime), new Date(lastCreationTime))
             ) {
-                currentDate = item.file.metadata.creationTime / 1000;
+                lastCreationTime = creationTime;
 
                 timeStampList.push({
                     tag: "date",
                     date: item.timelineDateString,
-                    id: currentDate.toString(),
+                    id: lastCreationTime.toString(),
                 });
                 timeStampList.push({
                     tag: "file",
@@ -1230,6 +1245,11 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
         }
     };
 
+    // See: [Note: Files in trash pseudo collection have deleteBy]
+    const deleteBy =
+        activeCollectionID == PseudoCollectionID.trash &&
+        (file as EnteTrashFile).deleteBy;
+
     return (
         <FileThumbnail_
             key={`thumb-${file.id}}`}
@@ -1283,17 +1303,13 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
                 <InSelectRangeOverlay />
             )}
 
-            {activeCollectionID == PseudoCollectionID.trash &&
-                // TODO(RE):
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-ignore
-                file.isTrashed && (
-                    <TileBottomTextOverlay>
-                        <Typography variant="small">
-                            {formattedDateRelative(enteFileDeletionDate(file))}
-                        </Typography>
-                    </TileBottomTextOverlay>
-                )}
+            {deleteBy && (
+                <TileBottomTextOverlay>
+                    <Typography variant="small">
+                        {formattedDateRelative(deleteBy)}
+                    </Typography>
+                </TileBottomTextOverlay>
+            )}
         </FileThumbnail_>
     );
 };

@@ -86,7 +86,7 @@ import exportService from "ente-new/photos/services/export";
 import { isMLSupported } from "ente-new/photos/services/ml";
 import {
     isDevBuildAndUser,
-    syncSettings,
+    pullSettings,
     updateCFProxyDisabledPreference,
     updateMapEnabled,
 } from "ente-new/photos/services/settings";
@@ -102,8 +102,8 @@ import {
     isSubscriptionPastDue,
     isSubscriptionStripe,
     leaveFamily,
+    pullUserDetails,
     redirectToCustomerPortal,
-    syncUserDetails,
     userDetailsAddOnBonuses,
     type UserDetails,
 } from "ente-new/photos/services/user-details";
@@ -230,7 +230,7 @@ const UserDetailsSection: React.FC<UserDetailsSectionProps> = ({
     } = useModalVisibility();
 
     useEffect(() => {
-        if (sidebarOpen) void syncUserDetails();
+        if (sidebarOpen) void pullUserDetails();
     }, [sidebarOpen]);
 
     const isNonAdminFamilyMember = useMemo(
@@ -771,7 +771,7 @@ const Preferences: React.FC<NestedSidebarDrawerVisibilityProps> = ({
     const isHLSGenerationEnabled = !!hlsGenStatusSnapshot?.enabled;
 
     useEffect(() => {
-        if (open) void syncSettings();
+        if (open) void pullSettings();
     }, [open]);
 
     const handleRootClose = () => {
