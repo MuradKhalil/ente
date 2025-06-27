@@ -7,7 +7,7 @@ import {
     groupFilesByCollectionID,
     sortFiles,
     uniqueFilesByID,
-} from "ente-gallery/utils/files";
+} from "ente-gallery/utils/file";
 import { collectionTypes, type Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import {
@@ -19,7 +19,6 @@ import {
     createCollectionNameByID,
     isHiddenCollection,
 } from "ente-new/photos/services/collection";
-import { getLatestVersionFiles } from "ente-new/photos/services/files";
 import { sortTrashItems, type TrashItem } from "ente-new/photos/services/trash";
 import { splitByPredicate } from "ente-utils/array";
 import { includes } from "ente-utils/type-guards";
@@ -246,8 +245,9 @@ export interface GalleryState {
      */
     fileNormalCollectionIDs: Map<number, number[]>;
     /**
-     * A map from Ente user IDs to their emails (except for the user in user
-     * themselves).
+     * A map from known Ente user IDs to their emails
+     *
+     * This will not have an entry for the user themselves.
      *
      * This is used to perform a fast lookup of the email of the Ente user that
      * shared a file or collection.
@@ -451,7 +451,6 @@ export type GalleryAction =
       }
     | { type: "setCollections"; collections: Collection[] }
     | { type: "setCollectionFiles"; collectionFiles: EnteFile[] }
-    | { type: "augmentCollectionFiles"; collectionFiles: EnteFile[] }
     | { type: "uploadFile"; file: EnteFile }
     | { type: "setTrashItems"; trashItems: TrashItem[] }
     | { type: "setPeopleState"; peopleState: PeopleState | undefined }
@@ -708,46 +707,13 @@ const galleryReducer: React.Reducer<GalleryState, GalleryAction> = (
         }
 
         case "setCollectionFiles": {
-            const unsyncedPrivateMagicMetadataUpdates =
-                prunedUnsyncedPrivateMagicMetadataUpdates(
-                    state.unsyncedPrivateMagicMetadataUpdates,
-                    action.collectionFiles,
-                );
             const lastSyncedCollectionFiles = sortFiles(action.collectionFiles);
-            const collectionFiles = deriveCollectionFiles(
-                lastSyncedCollectionFiles,
-                unsyncedPrivateMagicMetadataUpdates,
-            );
+            const collectionFiles = lastSyncedCollectionFiles;
 
             return stateByUpdatingFilteredFiles({
                 ...stateForUpdatedCollectionFiles(state, collectionFiles),
                 lastSyncedCollectionFiles,
-                unsyncedPrivateMagicMetadataUpdates,
-            });
-        }
-
-        case "augmentCollectionFiles": {
-            const unsyncedPrivateMagicMetadataUpdates =
-                prunedUnsyncedPrivateMagicMetadataUpdates(
-                    state.unsyncedPrivateMagicMetadataUpdates,
-                    action.collectionFiles,
-                );
-            const lastSyncedCollectionFiles = sortFiles(
-                getLatestVersionFiles(
-                    state.lastSyncedCollectionFiles.concat(
-                        action.collectionFiles,
-                    ),
-                ),
-            );
-            const collectionFiles = deriveCollectionFiles(
-                lastSyncedCollectionFiles,
-                unsyncedPrivateMagicMetadataUpdates,
-            );
-
-            return stateByUpdatingFilteredFiles({
-                ...stateForUpdatedCollectionFiles(state, collectionFiles),
-                lastSyncedCollectionFiles,
-                unsyncedPrivateMagicMetadataUpdates,
+                unsyncedPrivateMagicMetadataUpdates: new Map(),
             });
         }
 
@@ -1630,23 +1596,6 @@ const deriveHiddenAlbumsViewAndSelectedID = (
             activeCollection,
         },
     };
-};
-
-/**
- * Prune any entries for which we have newer remote data (as determined by their
- * presence in the given {@link updatedFiles}) from the given unsynced private
- * magic metadata {@link updates}.
- */
-const prunedUnsyncedPrivateMagicMetadataUpdates = (
-    updates: GalleryState["unsyncedPrivateMagicMetadataUpdates"],
-    updatedFiles: EnteFile[],
-) => {
-    // Fastpath for happy case.
-    if (updates.size == 0) return updates;
-
-    const prunedUpdates = new Map(updates);
-    for (const { id } of updatedFiles) prunedUpdates.delete(id);
-    return prunedUpdates;
 };
 
 /**

@@ -1758,4 +1758,5 @@
   "happyBirthdayToPerson": "Feliz aniversário a {name}! 🎉",
   "birthdays": "Aniversários",
   "wishThemAHappyBirthday": "Wish ${name} a happy birthday! 🎉"
+  "actionNotSupportedOnFavouritesAlbum": "Ação não suportada em álbum favorito"
 }

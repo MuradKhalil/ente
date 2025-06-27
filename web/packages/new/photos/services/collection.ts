@@ -1,4 +1,5 @@
 import { ensureLocalUser, type User } from "ente-accounts/services/user";
+import { blobCache } from "ente-base/blob-cache";
 import {
     boxSeal,
     boxSealOpen,
@@ -9,6 +10,7 @@ import {
 import { authenticatedRequestHeaders, ensureOk } from "ente-base/http";
 import { apiURL } from "ente-base/origins";
 import { ensureMasterKeyFromSession } from "ente-base/session";
+import { groupFilesByCollectionID } from "ente-gallery/utils/file";
 import {
     CollectionSubType,
     decryptRemoteCollection,
@@ -23,19 +25,27 @@ import {
     type CollectionType,
     type PublicURL,
 } from "ente-media/collection";
-import { type EnteFile } from "ente-media/file";
-import { ItemVisibility } from "ente-media/file-metadata";
+import {
+    decryptRemoteFile,
+    FileDiffResponse,
+    type EnteFile,
+} from "ente-media/file";
+import { ItemVisibility, metadataHash } from "ente-media/file-metadata";
 import {
     createMagicMetadata,
     encryptMagicMetadata,
 } from "ente-media/magic-metadata";
-import { batch, splitByPredicate } from "ente-utils/array";
+import { splitByPredicate } from "ente-utils/array";
 import { z } from "zod/v4";
-import { requestBatchSize, type UpdateMagicMetadataRequest } from "./file";
+import { batched, type UpdateMagicMetadataRequest } from "./file";
 import {
     removeCollectionIDLastSyncTime,
+    saveCollectionFiles,
+    saveCollectionLastSyncTime,
     saveCollections,
     saveCollectionsUpdationTime,
+    savedCollectionFiles,
+    savedCollectionLastSyncTime,
     savedCollections,
     savedCollectionsUpdationTime,
 } from "./photos-fdb";
@@ -261,10 +271,9 @@ export const pullCollections = async (): Promise<Collection[]> => {
 const getCollections = async (
     sinceTime: number,
 ): Promise<CollectionChange[]> => {
-    const res = await fetch(
-        await apiURL("/collections/v2", { sinceTime: sinceTime.toString() }),
-        { headers: await authenticatedRequestHeaders() },
-    );
+    const res = await fetch(await apiURL("/collections/v2", { sinceTime }), {
+        headers: await authenticatedRequestHeaders(),
+    });
     ensureOk(res);
     const { collections } = CollectionsResponse.parse(await res.json());
     return Promise.all(
@@ -276,6 +285,176 @@ const getCollections = async (
                 : await decryptRemoteKeyAndCollection(c),
         })),
     );
+};
+
+/**
+ * Fetch all files from remote and update our local database.
+ *
+ * Each time it updates the local database, the {@link onSetCollectionFiles}
+ * callback is also invoked to give the caller a chance to bring its own
+ * in-memory state up to speed.
+ *
+ * @param collections The user's collections. These are assumed to be the latest
+ * collections on remote (that is, the pull for collections should happen prior
+ * to calling this function).
+ *
+ * @param onSetCollectionFiles An optional callback invoked when the locally
+ * saved collection files were replaced by the provided {@link collectionFiles}.
+ *
+ * The callback is optional because we might be called in a context where we
+ * just want to update the local database, and there is no other in-memory state
+ * we need to keep in sync.
+ *
+ * The callback can be invoked multiple times for each pull (once for each batch
+ * of changes received, for each collection that was updated).
+ *
+ * @returns true if one or more files were updated locally, false otherwise.
+ */
+export const pullCollectionFiles = async (
+    collections: Collection[],
+    onSetCollectionFiles: ((files: EnteFile[]) => void) | undefined,
+) => {
+    let didUpdateFiles = false;
+
+    const savedFiles = await savedCollectionFiles();
+
+    // Prune collections files for which we no longer have a collection.
+    const collectionIDs = new Set(collections.map((c) => c.id));
+    let files = savedFiles.filter((f) => collectionIDs.has(f.collectionID));
+
+    // Update both the saved and in-memory files to reflect the pruning.
+    if (files.length != savedFiles.length) {
+        await saveCollectionFiles(files);
+        onSetCollectionFiles?.(files);
+        didUpdateFiles = true;
+    }
+
+    for (const collection of collections) {
+        let sinceTime = (await savedCollectionLastSyncTime(collection)) ?? 0;
+        if (sinceTime == collection.updationTime) {
+            // The updationTime of a collection is guaranteed to be >= the
+            // updationTime of any file in the collection.
+            continue;
+        }
+
+        const [thisCollectionFiles, otherFiles] = splitByPredicate(
+            files,
+            (f) => f.collectionID == collection.id,
+        );
+
+        const thisCollectionFilesByID = new Map(
+            thisCollectionFiles.map((f) => [f.id, f]),
+        );
+
+        while (true) {
+            const { diff, hasMore } = await getCollectionDiff(
+                collection.id,
+                sinceTime,
+            );
+            if (!diff.length) break;
+
+            for (const change of diff) {
+                sinceTime = Math.max(sinceTime, change.updationTime);
+                if (change.isDeleted) {
+                    thisCollectionFilesByID.delete(change.id);
+                } else {
+                    const file = await decryptRemoteFile(
+                        change,
+                        collection.key,
+                    );
+                    await clearCachedThumbnailIfContentChanged(
+                        thisCollectionFilesByID.get(change.id),
+                        file,
+                    );
+                    thisCollectionFilesByID.set(change.id, file);
+                }
+            }
+
+            files = otherFiles.concat([...thisCollectionFilesByID.values()]);
+
+            await saveCollectionFiles(files);
+            await saveCollectionLastSyncTime(collection, sinceTime);
+            onSetCollectionFiles?.(files);
+            didUpdateFiles = true;
+
+            if (!hasMore) break;
+        }
+
+        // There might be a difference between the latest updation time of a
+        // file in the collection, and the latest time of the collection itself,
+        // if something about the collection itself changed, not the files in it
+        // (e.g. if the collection was renamed).
+        //
+        // In such cases, advance the sync time to match the collection's update
+        // time so we don't do an unnecessary collection diff the next time.
+        await saveCollectionLastSyncTime(collection, collection.updationTime);
+    }
+
+    return didUpdateFiles;
+};
+
+/**
+ * Fetch all files in the given collection have been created or updated since
+ * {@link sinceTime}.
+ *
+ * Remote only, does not modify local state.
+ *
+ * @param collection The ID of the collection whose updates we want to fetch.
+ *
+ * @param sinceTime The timestamp of most recently update for the collection
+ * that we have already pulled. This serves both as a pagination mechanish, and
+ * a way to fetch a delta diff the next time the client needs to pull changes
+ * from remote.
+ */
+const getCollectionDiff = async (collectionID: number, sinceTime: number) => {
+    const res = await fetch(
+        await apiURL("/collections/v2/diff", { collectionID, sinceTime }),
+        { headers: await authenticatedRequestHeaders() },
+    );
+    ensureOk(res);
+    return FileDiffResponse.parse(await res.json());
+};
+
+/**
+ * Clear cached thumbnail of an existing file if the thumbnail data has changed.
+ *
+ * This function in expected to be called when we are processing a collection
+ * diff, updating our local state to reflect files that were updated on remote.
+ * This is an opportune moment to invalidate any cached thumbnails for files
+ * whose thumbnail content has changed.
+ *
+ * An example of when such invalidation is necessary:
+ *
+ * 1. Take a photo on mobile, and let it sync via the mobile app to us (web).
+ * 2. Edit the photo outside of Ente (e.g. using Apple Photos).
+ * 3. When the Ente mobile client next comes into foreground, it'll update the
+ *    remote thumbnail for the existing file to reflect the changes.
+ *
+ * @param existingFile The {@link EnteFile} we had in our local database before
+ * processing the diff response. Pass `undefined` to indicate that there was no
+ * existing file corresponding to {@link updatedFile}; in such a case this
+ * function is a no-op.
+ *
+ * @param updatedFile The update {@link EntneFile} (with the same file ID as the
+ * {@link existingFile}) which we got in the diff response.
+ */
+const clearCachedThumbnailIfContentChanged = async (
+    existingFile: EnteFile | undefined,
+    updatedFile: EnteFile,
+) => {
+    if (!existingFile) return;
+
+    // The hashes of the files differ, which indicates that the change was in
+    // the file's contents, not the metadata itself, and thus we should refresh
+    // the thumbnail.
+    if (
+        metadataHash(existingFile.metadata) !=
+        metadataHash(updatedFile.metadata)
+    ) {
+        // This is an infrequent occurrence, so we lazily get the cache.
+        const thumbnailCache = await blobCache("thumbs");
+        await thumbnailCache.delete(updatedFile.id.toString());
+    }
 };
 
 /**
@@ -353,8 +532,8 @@ export interface MoveToCollectionRequest {
 export const addToCollection = async (
     collection: Collection,
     files: EnteFile[],
-) => {
-    for (const batchFiles of batch(files, requestBatchSize)) {
+) =>
+    batched(files, async (batchFiles) => {
         const encryptedFileKeys = await encryptWithCollectionKey(
             collection,
             batchFiles,
@@ -369,8 +548,7 @@ export const addToCollection = async (
                 }),
             }),
         );
-    }
-};
+    });
 
 /**
  * Make a remote request to restore the given {@link files} to the given
@@ -381,8 +559,8 @@ export const addToCollection = async (
 export const restoreToCollection = async (
     collection: Collection,
     files: EnteFile[],
-) => {
-    for (const batchFiles of batch(files, requestBatchSize)) {
+) =>
+    batched(files, async (batchFiles) => {
         const encryptedFileKeys = await encryptWithCollectionKey(
             collection,
             batchFiles,
@@ -397,8 +575,28 @@ export const restoreToCollection = async (
                 }),
             }),
         );
-    }
-};
+    });
+
+/**
+ * Make a remote request to move the given {@link files} (which may be in
+ * different collections) to the given {@link collection}.
+ *
+ * This is a higher level primitive than {@link moveFromCollection} that first
+ * segregates the files into per-collection sets, and then performs
+ * {@link moveFromCollection} for each such set.
+ *
+ * Remote only, does not modify local state.
+ */
+export const moveToCollection = async (
+    collection: Collection,
+    files: EnteFile[],
+) =>
+    Promise.all(
+        groupFilesByCollectionID(files)
+            .entries()
+            .filter(([cid]) => cid != collection.id)
+            .map(([cid, cf]) => moveFromCollection(cid, collection, cf)),
+    );
 
 /**
  * Make a remote request to move the given {@link files} from a collection (as
@@ -407,12 +605,12 @@ export const restoreToCollection = async (
  *
  * Remote only, does not modify local state.
  */
-export const moveToCollection = async (
+export const moveFromCollection = async (
     fromCollectionID: number,
     toCollection: Collection,
     files: EnteFile[],
-) => {
-    for (const batchFiles of batch(files, requestBatchSize)) {
+) =>
+    batched(files, async (batchFiles) => {
         const encryptedFileKeys = await encryptWithCollectionKey(
             toCollection,
             batchFiles,
@@ -428,8 +626,7 @@ export const moveToCollection = async (
                 }),
             }),
         );
-    }
-};
+    });
 
 /**
  * Return an array of {@link CollectionFileItem}s, one for each file in
@@ -460,8 +657,8 @@ const encryptWithCollectionKey = async (
  *
  * Remote only, does not modify local state.
  */
-export const moveToTrash = async (files: EnteFile[]) => {
-    for (const batchFiles of batch(files, requestBatchSize)) {
+export const moveToTrash = async (files: EnteFile[]) =>
+    batched(files, async (batchFiles) =>
         ensureOk(
             await fetch(await apiURL("/files/trash"), {
                 method: "POST",
@@ -473,26 +670,24 @@ export const moveToTrash = async (files: EnteFile[]) => {
                     })),
                 }),
             }),
-        );
-    }
-};
+        ),
+    );
 
 /**
  * Make a remote request to delete the given {@link fileIDs} from trash.
  *
  * Remote only, does not modify local state.
  */
-export const deleteFromTrash = async (fileIDs: number[]) => {
-    for (const batchIDs of batch(fileIDs, requestBatchSize)) {
+export const deleteFromTrash = async (fileIDs: number[]) =>
+    batched(fileIDs, async (batchIDs) =>
         ensureOk(
             await fetch(await apiURL("/trash/delete"), {
                 method: "POST",
                 headers: await authenticatedRequestHeaders(),
                 body: JSON.stringify({ fileIDs: batchIDs }),
             }),
-        );
-    }
-};
+        ),
+    );
 
 /**
  * Rename a collection on remote.
@@ -721,7 +916,7 @@ const putCollectionsShareeMagicMetadata = async (
  * because remote will enforce the constraint and fail the request when we
  * attempt to create a second collection of type "favorites".
  */
-export const createFavoritesCollection = () =>
+const createFavoritesCollection = () =>
     createCollection(favoritesCollectionName, "favorites");
 
 /**
@@ -739,6 +934,58 @@ export const createUncategorizedCollection = () =>
     createCollection(uncategorizedCollectionName, "uncategorized");
 
 /**
+ * Return the user's own favorites collection if one is found in the local
+ * database. Otherwise create a new one and return that.
+ *
+ * Reads local state but does not modify it. The effects are on remote.
+ */
+const savedOrCreateUserFavoritesCollection = async () =>
+    (await savedUserFavoritesCollection()) ?? createFavoritesCollection();
+
+/**
+ * Return the user's own favorites collection, if any, present in the local
+ * database.
+ */
+export const savedUserFavoritesCollection = async () => {
+    const userID = ensureLocalUser().id;
+    const collections = await savedCollections();
+    return collections.find(
+        (collection) =>
+            // See: [Note: User and shared favorites]
+            collection.type == "favorites" && collection.owner.id == userID,
+    );
+};
+
+/**
+ * Mark the provided {@link files} as the user's favorites by adding them to the
+ * user's favorites collection.
+ *
+ * If the user doesn't yet have a favorites collection, it is created.
+ *
+ * Reads local state but does not modify it. The effects are on remote.
+ */
+export const addToFavorites = async (files: EnteFile[]) =>
+    addToCollection(await savedOrCreateUserFavoritesCollection(), files);
+
+/**
+ * Return the default hidden collection for the user if one is found in the
+ * local database. Otherwise create a new one and return that.
+ *
+ * Reads local state but does not modify it. The effects are on remote.
+ */
+const savedOrCreateDefaultHiddenCollection = async () =>
+    (await savedDefaultHiddenCollection()) ?? createDefaultHiddenCollection();
+
+/**
+ * Return the user's default hidden collection, if any, present in the
+ * local database.
+ */
+const savedDefaultHiddenCollection = async () =>
+    (await savedCollections()).find((collection) =>
+        isDefaultHiddenCollection(collection),
+    );
+
+/**
  * Create a new collection with hidden visibility on remote, marking it as the
  * default hidden collection, and return its local representation.
  *
@@ -746,7 +993,7 @@ export const createUncategorizedCollection = () =>
  *
  * See also: [Note: Multiple "default" hidden collections].
  */
-export const createDefaultHiddenCollection = () =>
+const createDefaultHiddenCollection = () =>
     createCollection(defaultHiddenCollectionName, "album", {
         subType: CollectionSubType.defaultHidden,
         visibility: ItemVisibility.hidden,
@@ -778,6 +1025,17 @@ export const findDefaultHiddenCollectionIDs = (collections: Collection[]) =>
 
 export const isHiddenCollection = (collection: Collection) =>
     collection.magicMetadata?.data.visibility == ItemVisibility.hidden;
+
+/**
+ * Hide the provided {@link files} by moving them to the default hidden
+ * collection.
+ *
+ * If the default hidden collection does not already exist, it is created.
+ *
+ * Reads local state but does not modify it. The effects are on remote.
+ */
+export const hideFiles = async (files: EnteFile[]) =>
+    moveToCollection(await savedOrCreateDefaultHiddenCollection(), files);
 
 /**
  * Return true if this is a collection that the user doesn't own.
