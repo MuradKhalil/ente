@@ -405,7 +405,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
           behavior: HitTestBehavior.opaque,
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(vertical: 16),
             decoration: BoxDecoration(
               color: colorScheme.fillFaint,
               borderRadius: BorderRadius.circular(12),
@@ -453,7 +453,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                             ? null
                             : () => _handleUserChoice(false),
                         child: Container(
-                          margin: const EdgeInsets.only(right: 6),
+                          margin: const EdgeInsets.only(left: 16, right: 6),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
                             vertical: 12,
@@ -494,7 +494,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                         onTap:
                             isProcessing ? null : () => _handleUserChoice(true),
                         child: Container(
-                          margin: const EdgeInsets.only(left: 6),
+                          margin: const EdgeInsets.only(left: 6, right: 16),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
                             vertical: 12,
@@ -528,6 +528,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                     ),
                   ],
                 ),
+                if (personPage) const SizedBox(height: 12),
                 if (personPage)
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
@@ -617,8 +618,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
             if (i == -1)
               SizedBox(
                 width: 72,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 4),
+                child: Center(
                   child: Text(
                     relevantPerson.data.name.trim(),
                     style: textTheme.bodyMuted,
