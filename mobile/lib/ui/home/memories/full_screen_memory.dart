@@ -13,13 +13,11 @@ import "package:photos/models/memories/memory.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/smart_memories_service.dart";
 import "package:photos/theme/colors.dart";
-import "package:photos/theme/ente_theme.dart";
 import "package:photos/theme/text_style.dart";
 import "package:photos/ui/actions/file/file_actions.dart";
 import "package:photos/ui/home/memories/custom_listener.dart";
 import "package:photos/ui/home/memories/memory_progress_indicator.dart";
 import "package:photos/ui/viewer/file/file_widget.dart";
-
 import "package:photos/ui/viewer/file/thumbnail_widget.dart";
 import "package:photos/ui/viewer/file_details/favorite_widget.dart";
 import "package:photos/utils/file_util.dart";
@@ -295,10 +293,12 @@ class _FullScreenMemoryState extends State<FullScreenMemory> {
             backgroundColor: Colors.black,
             extendBodyBehindAppBar: true,
             appBar: AppBar(
+              toolbarHeight: 64,
+              primary: false,
               automaticallyImplyLeading: false,
               title: ValueListenableBuilder(
                 valueListenable: inheritedData.indexNotifier,
-                child: InkWell(
+                child: GestureDetector(
                   onTap: () => Navigator.pop(context),
                   child: const Padding(
                     padding: EdgeInsets.fromLTRB(4, 8, 8, 8),
@@ -309,6 +309,9 @@ class _FullScreenMemoryState extends State<FullScreenMemory> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const SizedBox(
+                        height: 32,
+                      ),
                       showStepProgressIndicator
                           ? ValueListenableBuilder<Duration>(
                               valueListenable: durationNotifier,
@@ -330,7 +333,7 @@ class _FullScreenMemoryState extends State<FullScreenMemory> {
                               },
                             )
                           : const SizedBox.shrink(),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 6),
                       Row(
                         children: [
                           child!,
@@ -360,11 +363,12 @@ class _FullScreenMemoryState extends State<FullScreenMemory> {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Color.fromARGB(97, 0, 0, 0),
-                      Color.fromARGB(42, 0, 0, 0),
+                      Color.fromARGB(75, 0, 0, 0),
+                      Color.fromARGB(37, 0, 0, 0),
+                      Colors.transparent,
                       Colors.transparent,
                     ],
-                    stops: [0, 0.6, 1],
+                    stops: [0, 0.45, 0.8, 1],
                   ),
                 ),
               ),
@@ -426,7 +430,7 @@ class _FullScreenMemoryState extends State<FullScreenMemory> {
                     );
                   },
                 ),
-                const BottomGradient(),
+                BottomGradient(showTitle: _showTitle),
                 Column(
                   mainAxisAlignment: MainAxisAlignment.end,
                   mainAxisSize: MainAxisSize.min,
@@ -450,13 +454,11 @@ class _FullScreenMemoryState extends State<FullScreenMemory> {
                                     tag: widget.title,
                                     child: Text(
                                       widget.title,
-                                      style: getEnteTextTheme(context)
-                                          .large
-                                          .copyWith(
-                                            color: Colors.white,
-                                            fontSize: 40,
-                                            fontWeight: FontWeight.w600,
-                                          ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 30,
+                                        fontFamily: "Montserrat",
+                                      ),
                                       textAlign: TextAlign.left,
                                     ),
                                   ),
@@ -585,26 +587,34 @@ class MemoryCounter extends StatelessWidget {
 }
 
 class BottomGradient extends StatelessWidget {
-  const BottomGradient({super.key});
+  final ValueNotifier<bool> showTitle;
+  const BottomGradient({super.key, required this.showTitle});
 
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
-      child: Container(
-        height: 120,
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [
-              Color.fromARGB(97, 0, 0, 0),
-              Color.fromARGB(42, 0, 0, 0),
-              Colors.transparent,
-            ],
-            stops: [0, 0.5, 1.0],
-          ),
-        ),
+      child: ValueListenableBuilder(
+        valueListenable: showTitle,
+        builder: (context, value, _) {
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 875),
+            curve: Curves.easeOutQuart,
+            height: value ? 240 : 120,
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Color.fromARGB(97, 0, 0, 0),
+                  Color.fromARGB(42, 0, 0, 0),
+                  Colors.transparent,
+                ],
+                stops: [0, 0.5, 1.0],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -620,8 +630,7 @@ class _MemoryBlur extends StatelessWidget {
       valueListenable: inheritedData.indexNotifier,
       builder: (context, value, _) {
         final currentFile = inheritedData.memories[value].file;
-        if (currentFile.fileType == FileType.video ||
-            currentFile.fileType == FileType.livePhoto) {
+        if (currentFile.fileType == FileType.video) {
           return const SizedBox.shrink();
         }
         return AnimatedSwitcher(
