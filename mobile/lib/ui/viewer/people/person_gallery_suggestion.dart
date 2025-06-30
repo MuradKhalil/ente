@@ -188,7 +188,9 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
 
   void _navigateToCluster() {
     if (allSuggestions.isEmpty ||
-        currentSuggestionIndex >= allSuggestions.length) return;
+        currentSuggestionIndex >= allSuggestions.length) {
+      return;
+    }
 
     final currentSuggestion = allSuggestions[currentSuggestionIndex];
     final List<EnteFile> sortedFiles = List<EnteFile>.from(
@@ -212,7 +214,9 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
   Future<void> _handleUserChoice(bool accepted) async {
     if (isProcessing ||
         allSuggestions.isEmpty ||
-        currentSuggestionIndex >= allSuggestions.length) return;
+        currentSuggestionIndex >= allSuggestions.length) {
+      return;
+    }
 
     setState(() {
       isProcessing = true;
@@ -258,7 +262,9 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
   Future<void> _saveAsAnotherPerson() async {
     if (isProcessing ||
         allSuggestions.isEmpty ||
-        currentSuggestionIndex >= allSuggestions.length) return;
+        currentSuggestionIndex >= allSuggestions.length) {
+      return;
+    }
     setState(() {
       isProcessing = true;
     });

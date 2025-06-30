@@ -13,7 +13,6 @@ import {
 import { FixCreationTime } from "components/FixCreationTime";
 import { Sidebar } from "components/Sidebar";
 import { Upload } from "components/Upload";
-import SelectedFileOptions from "components/pages/gallery/SelectedFileOptions";
 import { sessionExpiredDialogAttributes } from "ente-accounts/components/utils/dialog";
 import { stashRedirect } from "ente-accounts/services/redirect";
 import { isSessionInvalid } from "ente-accounts/services/session";
@@ -49,6 +48,11 @@ import {
     SearchBar,
     type SearchBarProps,
 } from "ente-new/photos/components/SearchBar";
+import {
+    SelectedFileOptions,
+    type CollectionOp,
+    type FileOp,
+} from "ente-new/photos/components/SelectedFileOptions";
 import { WhatsNew } from "ente-new/photos/components/WhatsNew";
 import {
     GalleryEmptyState,
@@ -69,7 +73,7 @@ import { usePeopleStateSnapshot } from "ente-new/photos/components/utils/use-sna
 import { shouldShowWhatsNew } from "ente-new/photos/services/changelog";
 import { createAlbum } from "ente-new/photos/services/collection";
 import {
-    areOnlySystemCollections,
+    haveOnlySystemCollections,
     PseudoCollectionID,
 } from "ente-new/photos/services/collection-summary";
 import exportService from "ente-new/photos/services/export";
@@ -108,7 +112,7 @@ import {
 import { PromiseQueue } from "ente-utils/promise";
 import { t } from "i18next";
 import { useRouter, type NextRouter } from "next/router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileWithPath } from "react-dropzone";
 import { Trans } from "react-i18next";
 import {
@@ -121,12 +125,8 @@ import {
     SetFilesDownloadProgressAttributes,
     SetFilesDownloadProgressAttributesCreator,
 } from "types/gallery";
-import {
-    getSelectedCollection,
-    handleCollectionOp,
-    type CollectionOp,
-} from "utils/collection";
-import { getSelectedFiles, handleFileOp, type FileOp } from "utils/file";
+import { handleCollectionOp } from "utils/collection";
+import { getSelectedFiles, handleFileOp } from "utils/file";
 
 /**
  * The default view for logged in users.
@@ -249,9 +249,26 @@ const Page: React.FC = () => {
             : state.view?.activeCollectionSummaryID;
     const activeCollection =
         state.view?.type == "people" ? undefined : state.view?.activeCollection;
+    const activeCollectionSummary =
+        state.view?.type == "people"
+            ? undefined
+            : state.view?.activeCollectionSummary;
     const activePerson =
         state.view?.type == "people" ? state.view.activePerson : undefined;
     const activePersonID = activePerson?.id;
+
+    // TODO: Move into reducer
+    const barCollectionSummaries = useMemo(
+        () =>
+            barMode == "hidden-albums"
+                ? state.hiddenCollectionSummaries
+                : state.normalCollectionSummaries,
+        [
+            barMode,
+            state.hiddenCollectionSummaries,
+            state.normalCollectionSummaries,
+        ],
+    );
 
     if (process.env.NEXT_PUBLIC_ENTE_TRACE) console.log("render", state);
 
@@ -904,35 +921,21 @@ const Page: React.FC = () => {
             >
                 {showSelectionBar ? (
                     <SelectedFileOptions
+                        barMode={barMode}
+                        isInSearchMode={isInSearchMode}
+                        collection={
+                            isInSearchMode ? undefined : activeCollection
+                        }
+                        collectionSummary={
+                            isInSearchMode ? undefined : activeCollectionSummary
+                        }
+                        selectedFileCount={selected.count}
+                        selectedOwnFileCount={selected.ownCount}
+                        onClearSelection={clearSelection}
+                        onShowCreateCollectionModal={handleCreateAlbumForOp}
+                        onOpenCollectionSelector={handleOpenCollectionSelector}
                         handleCollectionOp={collectionOpsHelper}
                         handleFileOp={fileOpHelper}
-                        showCreateCollectionModal={handleCreateAlbumForOp}
-                        onOpenCollectionSelector={handleOpenCollectionSelector}
-                        count={selected.count}
-                        ownCount={selected.ownCount}
-                        clearSelection={clearSelection}
-                        barMode={barMode}
-                        activeCollectionID={activeCollectionID}
-                        selectedCollection={getSelectedCollection(
-                            selected.collectionID,
-                            state.collections,
-                        )}
-                        isFavoriteCollection={
-                            normalCollectionSummaries.get(activeCollectionID)
-                                ?.type == "favorites"
-                        }
-                        isUncategorizedCollection={
-                            normalCollectionSummaries.get(activeCollectionID)
-                                ?.type == "uncategorized"
-                        }
-                        isIncomingSharedCollection={
-                            normalCollectionSummaries.get(activeCollectionID)
-                                ?.type == "incomingShareCollaborator" ||
-                            normalCollectionSummaries.get(activeCollectionID)
-                                ?.type == "incomingShareViewer"
-                        }
-                        isInSearchMode={isInSearchMode}
-                        isInHiddenSection={barMode == "hidden-albums"}
                     />
                 ) : barMode == "hidden-albums" ? (
                     <HiddenSectionNavbarContents
@@ -967,8 +970,8 @@ const Page: React.FC = () => {
                 }}
                 mode={barMode}
                 shouldHide={isInSearchMode}
-                collectionSummaries={normalCollectionSummaries}
-                hiddenCollectionSummaries={state.hiddenCollectionSummaries}
+                barCollectionSummaries={barCollectionSummaries}
+                emailByUserID={state.emailByUserID}
                 shareSuggestionEmails={state.shareSuggestionEmails}
                 people={
                     (state.view.type == "people"
@@ -989,27 +992,27 @@ const Page: React.FC = () => {
                     uploadTypeSelectorIntent,
                     uploadTypeSelectorView,
                 }}
+                isFirstUpload={haveOnlySystemCollections(
+                    normalCollectionSummaries,
+                )}
                 activeCollection={activeCollection}
                 closeUploadTypeSelector={setUploadTypeSelectorView.bind(
                     null,
                     false,
                 )}
-                onOpenCollectionSelector={handleOpenCollectionSelector}
-                onCloseCollectionSelector={handleCloseCollectionSelector}
                 setLoading={setBlockingLoad}
                 setShouldDisableDropzone={setShouldDisableDropzone}
                 onRemotePull={remotePull}
                 onRemoteFilesPull={remoteFilesPull}
+                onOpenCollectionSelector={handleOpenCollectionSelector}
+                onCloseCollectionSelector={handleCloseCollectionSelector}
                 onUploadFile={(file) => dispatch({ type: "uploadFile", file })}
                 onShowPlanSelector={showPlanSelector}
-                isFirstUpload={areOnlySystemCollections(
-                    normalCollectionSummaries,
-                )}
-                showSessionExpiredMessage={showSessionExpiredDialog}
+                onShowSessionExpiredDialog={showSessionExpiredDialog}
             />
             <Sidebar
                 {...sidebarVisibilityProps}
-                collectionSummaries={normalCollectionSummaries}
+                normalCollectionSummaries={normalCollectionSummaries}
                 uncategorizedCollectionSummaryID={
                     state.uncategorizedCollectionSummaryID
                 }
@@ -1050,12 +1053,9 @@ const Page: React.FC = () => {
                     setSelected={setSelected}
                     activeCollectionID={activeCollectionID}
                     activePersonID={activePerson?.id}
-                    isInIncomingSharedCollection={
-                        normalCollectionSummaries.get(activeCollectionID)
-                            ?.type == "incomingShareCollaborator" ||
-                        normalCollectionSummaries.get(activeCollectionID)
-                            ?.type == "incomingShareViewer"
-                    }
+                    isInIncomingSharedCollection={activeCollectionSummary?.attributes.has(
+                        "sharedIncoming",
+                    )}
                     isInHiddenSection={barMode == "hidden-albums"}
                     {...{
                         favoriteFileIDs,

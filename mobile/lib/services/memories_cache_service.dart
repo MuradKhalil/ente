@@ -148,7 +148,7 @@ class MemoriesCacheService {
     unawaited(_prefs.setBool(_shouldUpdateCacheKey, true));
   }
 
-  Future<List<SmartMemory>> getMemories() async {
+  Future<List<SmartMemory>> getMemories({bool onlyUseCache = false}) async {
     _logger.info("getMemories called");
     if (!showAnyMemories) {
       _logger.info('Showing memories is disabled in settings, showing none');
@@ -158,6 +158,9 @@ class MemoriesCacheService {
       if (_cachedMemories != null && _cachedMemories!.isNotEmpty) {
         _logger.info("Found memories in memory cache");
         return _cachedMemories!;
+      } else if (onlyUseCache) {
+        _logger.info("Only using cache, no memories found");
+        return [];
       }
       try {
         if (!enableSmartMemories) {
@@ -437,7 +440,7 @@ class MemoriesCacheService {
       );
       return [];
     }
-    final allMemories = await getMemories();
+    final allMemories = await getMemories(onlyUseCache: true);
     if (onThisDay && pastYears && smart) {
       return allMemories;
     }
