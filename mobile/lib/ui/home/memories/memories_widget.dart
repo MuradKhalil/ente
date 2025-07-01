@@ -77,7 +77,8 @@ class _MemoriesWidgetState extends State<MemoriesWidget> {
 
   Widget _memories() {
     return FutureBuilder<List<SmartMemory>>(
-      future: memoriesCacheService.getMemories(),
+      // future: memoriesCacheService.getMemories(),
+      future: livePhotosMemory(),
       builder: (context, snapshot) {
         if (snapshot.hasError || !snapshot.hasData) {
           return SizedBox(

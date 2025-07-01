@@ -630,9 +630,10 @@ class _MemoryBlur extends StatelessWidget {
       valueListenable: inheritedData.indexNotifier,
       builder: (context, value, _) {
         final currentFile = inheritedData.memories[value].file;
-        if (currentFile.fileType == FileType.video) {
-          return const SizedBox.shrink();
-        }
+        // if (currentFile.fileType == FileType.video ||
+        //     currentFile.fileType == FileType.livePhoto) {
+        //   return const SizedBox.shrink();
+        // }
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 750),
           switchInCurve: Curves.easeOutExpo,
@@ -648,6 +649,7 @@ class _MemoryBlur extends StatelessWidget {
               shouldShowSyncStatus: false,
               shouldShowFavoriteIcon: false,
               shouldShowVideoOverlayIcon: false,
+              isFromBlur: true,
             ),
           ),
         );

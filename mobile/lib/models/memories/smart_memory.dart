@@ -1,6 +1,8 @@
 import "package:photos/generated/l10n.dart";
 import "package:photos/models/base/id.dart";
+import "package:photos/models/file/file_type.dart";
 import "package:photos/models/memories/memory.dart";
+import "package:photos/services/search_service.dart";
 
 enum MemoryType {
   people,
@@ -90,4 +92,31 @@ class SmartMemory {
     lastCreationTime ??= creationTimes.last;
     return (firstCreationTime! + lastCreationTime!) ~/ 2;
   }
+}
+
+Future<List<SmartMemory>> livePhotosMemory() async {
+  final allFiles = await SearchService.instance.getAllFilesForSearch();
+  final livePhotos =
+      allFiles.where((file) => file.fileType == FileType.livePhoto).toList();
+  final videos = allFiles
+      .where((file) => file.fileType == FileType.video && file.isRemoteFile)
+      .toList();
+  return [
+    // SmartMemory(
+    //   Memory.fromFiles(livePhotos, null),
+    //   MemoryType.clip,
+    //   "Live Photos",
+    //   0,
+    //   0,
+    //   id: "live_photos_memory",
+    // ),
+    SmartMemory(
+      Memory.fromFiles(videos, null),
+      MemoryType.clip,
+      "Videos",
+      0,
+      0,
+      id: "videos_memory",
+    ),
+  ];
 }

@@ -47,6 +47,7 @@ class ThumbnailWidget extends StatefulWidget {
   ///shows a centered play icon.
   final bool shouldShowVideoDuration;
   final bool shouldShowVideoOverlayIcon;
+  final bool isFromBlur;
 
   ThumbnailWidget(
     this.file, {
@@ -65,6 +66,7 @@ class ThumbnailWidget extends StatefulWidget {
     this.shouldShowFavoriteIcon = true,
     this.shouldShowVideoDuration = false,
     this.shouldShowVideoOverlayIcon = true,
+    this.isFromBlur = false,
   }) : super(key: key ?? Key(file.tag));
 
   @override
@@ -143,6 +145,9 @@ class _ThumbnailWidgetState extends State<ThumbnailWidget> {
 
   @override
   Widget build(BuildContext context) {
+    print(
+      "---------- ${widget.isFromBlur} Building thumbnail for ${widget.file.displayName}",
+    );
     if (widget.file.isRemoteFile) {
       _loadNetworkImage();
     } else {
