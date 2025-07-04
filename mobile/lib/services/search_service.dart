@@ -44,6 +44,7 @@ import "package:photos/models/search/search_types.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/account/user_service.dart";
 import 'package:photos/services/collections_service.dart';
+import "package:photos/services/date_search_service.dart";
 import "package:photos/services/filter/db_filters.dart";
 import "package:photos/services/location_service.dart";
 import "package:photos/services/machine_learning/face_ml/face_filtering/face_filtering_constants.dart";
@@ -1173,6 +1174,15 @@ class SearchService {
   ) async {
     final List<GenericSearchResult> searchResults = [];
     final potentialDates = _getPossibleEventDate(context, query);
+    final exactDates = DateSearchService.instance.parseDate(query);
+
+    if (exactDates.item1 != null && exactDates.item2 != null) {
+      if (!potentialDates.contains(exactDates)) {
+        potentialDates.add(
+          Tuple3(exactDates.item1!, exactDates.item2!, exactDates.item3),
+        );
+      }
+    }
 
     for (var potentialDate in potentialDates) {
       final int day = potentialDate.item1;
